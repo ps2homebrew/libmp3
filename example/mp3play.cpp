@@ -38,22 +38,13 @@
 
 #include "rmalloc.h"
 #include "libmp3.h"
-#include "mp3help.h" /* for handling errors */
+#include "id3tag.h"
 
 /*
 #include "bstdfile.h"
 #include "directory.h" 
 #include "file.h"
 */
-
-#define HI(x) (x>>8)
-#define LO(x) (x & 0x00FF)
-#define COMB(x,y) (x << 8)+y
-#define BLOCK 32768
-#define CD_S_ISDIR(x) x & 2
-#define CD_S_ISFILE(x) !CD_S_ISDIR(x)
-
-
 
 int ret = 0;
 
@@ -82,13 +73,15 @@ void mp3_callback(int *data) { // fixme: pass useful information
 	/* intended to read pad or update graphics, whatever */
 
 	static int i = 0;
-	if (i++ % 64 == 0) // dont printf too often or badness
-		printf (".");
+	printf (".");
 }
 
 int main(int argc, char **argv)
 {
 	char *filename = "host:contrib/test.mp3";
+	struct id3_file *tag_file;
+	struct id3_tag *tag;
+	struct id3_frame *frame;
 
 	if (argc > 1) {
 		filename = argv[1];
@@ -106,6 +99,14 @@ int main(int argc, char **argv)
 	SjPCM_Clearbuff();
 	SjPCM_Setvol(0x3fff);
 	SjPCM_Play();
+
+/*
+	printf ("Reading ID3 from '%s'\n", filename);
+  	tag_file = id3_file_open(filename, ID3_FILE_MODE_READONLY);
+  	tag = id3_file_tag(tag_file);
+	frame = id3_tag_findframe(tag, ID3_FRAME_TITLE, 0); // first frame
+	id3_file_close(tag_file);
+*/
 
 	printf ("Playing MP3 '%s'\n", filename);
 	PlayMP3(filename, (functionPointer) mp3_callback);

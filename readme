@@ -2,6 +2,10 @@ What is it
 ~~~~
 A wrapper around the libmad library that manages mp3 operations
 
+UPDATE
+
+Initial id3v2 support in example madplayer app.
+
 What does it do
 ~~~~
 You execute the PlayMP3 function with a filename.
@@ -9,19 +13,19 @@ You execute the PlayMP3 function with a filename.
 The callback will be executed during the decoding of the mp3.  Be sure
 to return from this function quickly else the audio may stutter or freeze.
 
+UPDATE
+
+Specify mp3 using command line argument and madplay.elf
+
 Compiling
 ~~~~
-I setup the environment variables LIBMP3 and LIBMAD.  eg:
+I setup the following env vars:
 export LIBMP3=$PS2DEV/libmp3
 export LIBMAD=$LIBMP3/libmad
+export LIBID3TAG=$LIBMP3/libid3tag
+export ZLIB=.... wherever
 
-Also included is libcdvdfs.a and libsample.a.  I believe these 
-can also be found in other projects on cvs.ps2dev.org.
-
-Requirements
-~~~~
-usbd.irx - I use an official Sony release.  Let me know if the
-ps2sdk release works for you.
+I had to rename zlib.a to libzlib.a.
 
 It doesn't work!
 ~~~~
@@ -38,7 +42,7 @@ these things:
 
 Limitations
 ~~~~
-Asynchronous playback is not supported.  
+Lots of wasted cpu
 
 Who am I
 ~~~
@@ -49,11 +53,16 @@ When did this happen
 Started project on 3rd of Jan 2005.
 Completed milestone "Looks like a Library" on 2nd of Feb 2005.
 Imported into public CVS on 2nd of Feb 2005.
+Completed milestone "Latest Madplayer + ID3V2" on 6th of Feb 2005.
+Updated public CVS on 7nd of Feb 2005.
 
 Thanks 
 ~~~~
-Primetime - for initially releasing the port
+The Mad team - your code is ports so easily, you rock!
+Sg2 - for initial port and inspiration
+Primetime - for doing something
 Impulse/Weltall/Dlanor - for publishing their improvements to the port
+Sjeep - sound driver legend
 #ps2dev - Help
 
 Licenses

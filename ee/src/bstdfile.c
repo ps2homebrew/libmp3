@@ -1,5 +1,5 @@
 /* From Ryan:  This file serves as a way to stream all MP3 Data from 
-the hard drive*/
+the hard drive*/ 
 
 /* HTAB = 4 */
 /****************************************************************************
@@ -146,6 +146,8 @@ bstdfile_t *NewBstdFile(int fp, int memory)
 	bstdfile_t	*BstdFile;
 	int sizeRead;
 
+	printf ("NewBstdFile (%d, %d)\n", fp, memory);
+
 	/* Allocate the bstdfile structure. */
 	BstdFile=(bstdfile_t *)malloc(sizeof(bstdfile_t));
 	if(BstdFile==NULL)
@@ -187,6 +189,8 @@ bstdfile_t *NewBstdFile(int fp, int memory)
  ****************************************************************************/
 int BstdFileDestroy(bstdfile_t *BstdFile)
 {
+	printf ("BstdFileDestroy(%p)\n", BstdFile);
+
 	if(BstdFile==NULL)
 	{
 		errno=EBADF;
@@ -208,7 +212,7 @@ int BstdFileDestroy(bstdfile_t *BstdFile)
  ****************************************************************************/
 int BstdFileEofP(const bstdfile_t *BstdFile)
 {
-//	printf ("BstdFileEofP\n");
+//	printf ("BstdFEofP\n");
 	return(BstdFile->eof);
 }
 
@@ -226,7 +230,9 @@ int EndOfFile(int f)
 {
 	unsigned char t[512];
 	int size;
-//	printf ("EndOfFile (%d)\n", f);
+
+	printf ("EndOfFile (%d)\n", f);
+
 	switch (memoryFile)
 	{
 	case 0:

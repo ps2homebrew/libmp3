@@ -28,6 +28,7 @@
 #include "fileXio_rpc.h"
 #include "errno.h"
 
+#include "id3tag.h"
 #include "string.h"
 #include "fileio.h"
 #include "file.h"
@@ -43,7 +44,7 @@
 
 
 #define SAMPLEBUFFER 250000*sizeof(short) //this is the size of our resampling buffer
-#define TICK 800  //800 for NTSC,  960 for PAL
+#define TICK 960  //800 for NTSC,  960 for PAL
 
 static short left[TICK*3] __attribute__((aligned (64)));  //Holds the samples we put into the hardware
 static short right[TICK*3] __attribute__((aligned (64)));
@@ -211,8 +212,8 @@ int PlayM3U(char *filename, functionPointer callback)
 }
 
 
+functionPointer cb __attribute__((aligned (16)));
 
-functionPointer cb __attribute__((aligned (32)));
 
 /****************************************************************************
  * Plays a specific MP3 from 'filename.'									*
@@ -737,7 +738,11 @@ int MpegAudioDecoder(int InputFp)
 			 }
 		 }
 
-		cb(); 
+		{
+			static int i = 0;
+			if (i++ % 64 == 0) // update 1/64th of the time
+				cb(); 
+		}
 
 	}while(1); //The song has been buffered
 
