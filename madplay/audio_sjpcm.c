@@ -30,6 +30,7 @@
 # include <sjpcm.h>
 # include <string.h>
 # include <mad.h>
+# include <kernel.h>
 
 # include "gettext.h"
 
@@ -45,7 +46,22 @@
 #include <sifcmd.h>
 #include <loadfile.h>
 
+typedef void (*functionPointer)();
+
+extern void *_gp;
+
 static char const *host;
+
+//int frame_num __attribute__((aligned (16)));
+
+int current_buffer __attribute__((aligned (16)));
+int buffered __attribute__((aligned (16)));
+
+ee_thread_t thread __attribute__((aligned (16)));
+static char userThreadStack[16*1024] __attribute__((aligned(16)));
+
+volatile int mainPid __attribute__((aligned(16))) = 0;
+volatile int outputPid __attribute__((aligned(16))) = 0;
 
 int loadModules()
 {
@@ -56,11 +72,6 @@ int loadModules()
 	
 	return ret;
 }
-
-int vsync_num __attribute__((aligned (16)));
-int frame_num __attribute__((aligned (16)));
-int current_buffer __attribute__((aligned (16)));
-int buffered __attribute__((aligned (16)));
 
 // taken from gslib
 void EnableVSyncCallbacks(void)
@@ -129,39 +140,61 @@ unsigned short hold[2][FRAME_SIZE] __attribute__((aligned (16)));
 unsigned int held __attribute__((aligned (16))); // number of samples buffd 
 // ... for incomplete tick
 
-unsigned int vsync_func(void)
+static void output(void *dat)
 {
+	int offset;
 
-// doh! cant do this here!
-//	SjPCM_Enqueue(...);
+	while (1) 
+	{
 
-	vsync_num++;
-	asm __volatile__ ("ei");
+		SuspendThread(mainPid); // suspend instead of blocking on semaphors.
 
-  return 0;
+		offset = (current_buffer % FRAMES) * TICK;
+
+		if ((buffered - current_buffer) > 0) { 
+			SjPCM_Enqueue(&(hold[0][offset]), &(hold[1][offset]), TICK, 0); 
+			current_buffer++;
+		}
+
+		ResumeThread(mainPid);
+		SleepThread();
+
+	}
 }
 
-typedef void (*functionPointer)();
+int vsync_func(void)
+{
+
+	if (outputPid) 
+		iWakeupThread(outputPid);
+
+	asm __volatile__ ("ei");
+
+	return 0;
+}
 
 static
 int init(struct audio_init *init)
 {
-  host = init->path;
-  if (host && *host == 0)
-    host = 0;
+	int status;
+	ee_sema_t sema;
+
+	host = init->path;
+	if (host && *host == 0)
+		host = 0;
 
 	/* load modules... maybe shouldnt do this here */
-  SifInitRpc(0);
-  if (loadModules() < 0) {
+	SifInitRpc(0);
+	if (loadModules() < 0) {
 		printf ("Failed to load modules\n");
 		return -1;
-  }
+	}
 
-  /* sound */
-  SjPCM_Init(1);
+	/* sound */
+	SjPCM_Init(1);
  	SjPCM_Clearbuff();
-  SjPCM_Setvol(0x3fff);
-  SjPCM_Play();
+	SjPCM_Setvol(0x3fff);
+	SjPCM_Play();
 
 	/* buffer */
 	bzero(hold, sizeof(hold));
@@ -169,31 +202,36 @@ int init(struct audio_init *init)
 	buffered = 0;
 	current_buffer = 0;
 
-	/* vsync callback */
-	vsync_num=0;
-	frame_num=0;
+	/* vsync interrupt handler */
 	AddVSyncCallback((functionPointer)&vsync_func);
 
-  return 0;
+	/* thread to output func */
+	thread.func = (void *)output;
+	thread.stack = userThreadStack;
+	thread.stack_size = sizeof(userThreadStack);
+	thread.gp_reg = &_gp;
+	thread.initial_priority = 48;
+
+	mainPid = GetThreadId();
+	ChangeThreadPriority(mainPid, 51);
+
+	outputPid = CreateThread(&thread);
+	status = StartThread(outputPid, NULL);
+
+	return 0;
 
 }
 
 static
 int config(struct audio_config *config)
 {
-  config->channels  = 2;
-  config->speed     = 48000;
-  config->precision = 16;
-  return 0;
-}
 
-#define csr			0x12001000	// System status and reset
-#define CSR			((volatile u64 *)(csr))
+	config->channels  = 2;
+	config->speed     = 48000;
+	config->precision = 16;
 
-inline void wait_vsync(void)
-{
-	*CSR = *CSR & 8;
-	while(!(*CSR & 8));
+	return 0;
+
 }
 
 static struct audio_dither left_dither, right_dither;
@@ -202,113 +240,104 @@ unsigned int audio_pcm_sjpcm(unsigned short *leftout, unsigned short *rightout, 
 			  mad_fixed_t const *left, mad_fixed_t const *right,
 			  enum audio_mode mode, struct audio_stats *stats)
 {
-  unsigned int len;
+	unsigned int len;
 
-  len = nsamples;
+	len = nsamples;
 
-  if (right) {  /* stereo */
-    switch (mode) {
-    case AUDIO_MODE_ROUND:
-      while (len--) {
-	leftout[0] = audio_linear_round(16, *left++,  stats);
-	rightout[0] = audio_linear_round(16, *right++, stats);
+	if (right) 
+	{	/* stereo */
 
-	leftout++;
-	rightout++;
-      }
-      break;
+		switch (mode) 
+		{
 
-    case AUDIO_MODE_DITHER:
-      while (len--) {
-	leftout[0] = audio_linear_dither(16, *left++, &left_dither, stats);
-	rightout[0] = audio_linear_dither(16, *right++, &right_dither, stats);
+		case AUDIO_MODE_ROUND:
 
-	leftout++;
-	rightout++;
-      }
-      break;
+			while (len--) 
+			{
+				*leftout = audio_linear_round(16, *left++, stats);
+				*rightout = audio_linear_round(16, *right++, stats);
 
-    default:
-      return 0;
-    }
+				leftout++;
+				rightout++;
+			}
+			break;
 
-    return nsamples;
-  }
-  else {  /* mono */
-    switch (mode) {
-    case AUDIO_MODE_ROUND:
-      while (len--)
-	*leftout++ = audio_linear_round(16, *left++, stats);
-      break;
+		case AUDIO_MODE_DITHER:
 
-    case AUDIO_MODE_DITHER:
-      while (len--)
-	*leftout++ = audio_linear_dither(16, *left++, &left_dither, stats);
-      break;
+			while (len--) 
+			{
+				*leftout = audio_linear_dither(16, *left++, &left_dither, stats);
+				*rightout = audio_linear_dither(16, *right++, &right_dither, stats);
 
-    default:
-      return 0;
-    }
+				leftout++;
+				rightout++;
+			}
+			break;
 
-    return nsamples;
-  }
-}
+		default:
+			return 0;
+		}
 
-static
-void output() 
-{
-	int offset;
+		return nsamples;
+	}
+	else {	/* mono */
+		switch (mode) {
+		case AUDIO_MODE_ROUND:
+			while (len--)
+				*leftout++ = audio_linear_round(16, *left++, stats);
+			break;
 
-//	printf ("output\n");
+		case AUDIO_MODE_DITHER:
+			while (len--)
+				*leftout++ = audio_linear_dither(16, *left++, &left_dither, stats);
+			break;
 
-	offset = (current_buffer % FRAMES) * TICK;
+		default:
+			return 0;
+		}
 
-	if ((frame_num < vsync_num) && (buffered - current_buffer)) { 
-		SjPCM_Enqueue(&(hold[0][offset]), &(hold[1][offset]), TICK, 0); 
-		frame_num = vsync_num;
-		current_buffer++;
+		return nsamples;
 	}
 }
 
 static
 int buffer(unsigned short const *leftptr, unsigned short const *rightptr, signed int len)
 {
-  unsigned int grab;
 
-// printf ("buffer(%p, %d)\n", ptr, len);
+	unsigned int grab;
 
-	while ((buffered - current_buffer) > 10) // prebuffer amount
+	while ((buffered - current_buffer) >= (FRAMES - 5))  // leave 5 ticks empty to avoid overrun
 	{
-		// buffer already has something
-		output();
+
+		SuspendThread(mainPid);
+
 	}
 
-	while (len > 0) {
+	while (len > 0) 
+	{
 
 		// grab a ticks worth of data
-    	grab = TICK;
+		grab = TICK;
 
 		// or grab enough to complete a tick
-    	grab = (grab - held) < grab ? (grab - held) : grab; 
+		grab = (grab - held) < grab ? (grab - held) : grab; 
 
 		// but dont grab too much
-    	grab = len < grab ? len : grab; 
+		grab = len < grab ? len : grab; 
 
-    	len -= grab;
-
-//    	printf ("grab %5d held %5d buff %5d len %5d\n ", grab, held, buffered, len);
+		len -= grab;
 
 		// copy the data to the buffer
-    	memcpy(&hold[0][(buffered % FRAMES) * TICK + held], leftptr, grab * 2);
-    	memcpy(&hold[1][(buffered % FRAMES) * TICK + held], rightptr, grab * 2);
+	    	memcpy(&hold[0][(buffered % FRAMES) * TICK + held], leftptr, grab * 2);
+	    	memcpy(&hold[1][(buffered % FRAMES) * TICK + held], rightptr, grab * 2);
 
 		if ((grab + held) == TICK) {
 
 			// a complete tick has been buffered
 			buffered++;
 			held = 0;
-    		leftptr  += grab;
-    		rightptr  += grab;
+    			leftptr += grab;
+    			rightptr += grab;
 
 		} else {
 
@@ -317,38 +346,36 @@ int buffer(unsigned short const *leftptr, unsigned short const *rightptr, signed
 
 		}
 
-  }
+	}
 
-  return 0;
+	return 0;
 }
 
 static
 int play(struct audio_play *play)
 {
-  unsigned short left[MAX_NSAMPLES];
-  unsigned short right[MAX_NSAMPLES];
-  signed int len;
+	unsigned short left[MAX_NSAMPLES];
+	unsigned short right[MAX_NSAMPLES];
+	signed int len;
+	int status;
 
-// printf ("play %d\n", play->nsamples);
-
-  len = audio_pcm_sjpcm(left, right, play->nsamples,
+	len = audio_pcm_sjpcm(left, right, play->nsamples,
 			play->samples[0], play->samples[1],
 			play->mode, play->stats);
 
-//  if (frame_num == 0) 
-//		frame_num = vsync_num; // catch up 
+	status = buffer(left, right, len);
 
-//	printf ("%5d %5d %5d %5d %d\n", buffered, current_buffer, vsync_num, frame_num, len);
-
-  return buffer(left, right, len);
+	return status;
 }
 
 static
 int stop(struct audio_stop *stop)
 {
-  SjPCM_Pause();
+	SjPCM_Pause();
 
-  return 0;
+	DeleteThread(outputPid);
+
+	return 0;
 }
 
 void DisableVSyncCallbacks(void)
@@ -370,39 +397,34 @@ void DisableVSyncCallbacks(void)
 static
 int finish(struct audio_finish *finish)
 {
-  SjPCM_Pause();
+	SjPCM_Pause();
+
 	DisableVSyncCallbacks();
 
-  return 0;
+	return 0;
 }
 
 int audio_sjpcm(union audio_control *control)
 {
-  audio_error = 0;
+	audio_error = 0;
 
-//  printf ("audio_sjpcm()\n");
+	switch (control->command) 
+	{
+		case AUDIO_COMMAND_INIT:
+			return init(&control->init);
 
-  switch (control->command) {
-  case AUDIO_COMMAND_INIT:
-//printf ("AUDIO_COMMAND_INIT\n");
-    return init(&control->init);
+		case AUDIO_COMMAND_CONFIG:
+			return config(&control->config);
 
-  case AUDIO_COMMAND_CONFIG:
-//printf ("AUDIO_COMMAND_CONFIG\n");
-    return config(&control->config);
+		case AUDIO_COMMAND_PLAY:
+			return play(&control->play);
 
-  case AUDIO_COMMAND_PLAY:
-//printf ("AUDIO_COMMAND_PLAY\n");
-    return play(&control->play);
+		case AUDIO_COMMAND_STOP:
+			return stop(&control->stop);
 
-  case AUDIO_COMMAND_STOP:
-//printf ("AUDIO_COMMAND_STOP\n");
-    return stop(&control->stop);
+		case AUDIO_COMMAND_FINISH:
+			return finish(&control->finish);
+	}
 
-  case AUDIO_COMMAND_FINISH:
-//printf ("AUDIO_COMMAND_FINISH\n");
-    return finish(&control->finish);
-  }
-
-  return 0;
+	return 0;
 }
