@@ -6,9 +6,8 @@ What does it do
 ~~~~
 You execute the PlayMP3 function with a filename.
 
-You must also provide a callback function.  The callback will be
-executed during the decoding of the mp3.  Be sure to return from
-this function quickly else the audio may stutter or freeze.
+The callback will be executed during the decoding of the mp3.  Be sure
+to return from this function quickly else the audio may stutter or freeze.
 
 Compiling
 ~~~~
